@@ -29,7 +29,7 @@ struct hlist_test_pdata {
 #define hlist_to_test(ptr) \
     hlist_entry(ptr, struct hlist_test_node, list)
 
-int hlist_selftest(struct hlist_test_pdata *hdata)
+static int hlist_selftest(struct hlist_test_pdata *hdata)
 {
     struct hlist_test_node *node, *nnode, *tnode;
     struct hlist_node *list, *nlist, *tlist;
