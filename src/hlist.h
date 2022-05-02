@@ -5,6 +5,9 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#define likely(x)   __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+
 struct hlist_node {
     struct hlist_node *next;
     struct hlist_node **pprev;
@@ -36,6 +39,20 @@ struct hlist_head {
     _ptr ? container_of(_ptr, type, member) : NULL;     \
 })
 
+#ifndef POISON_OFFSET
+# define POISON_OFFSET 0
+#endif
+
+#define POISON_HLIST1 ((void *) POISON_OFFSET + 0x10)
+#define POISON_HLIST2 ((void *) POISON_OFFSET + 0x20)
+
+#ifdef DEBUG_HLIST
+extern bool hlist_debug_head_add_check(struct hlist_head *head, struct hlist_node *new);
+extern bool hlist_debug_next_add_check(struct hlist_node *next, struct hlist_node *new);
+extern bool hlist_debug_prev_add_check(struct hlist_node *prev, struct hlist_node *new);
+extern bool hlist_debug_del_check(struct hlist_node *node);
+#endif
+
 /**
  * hlist_head_init - initialize a hlist_head structure.
  * @head: list_head structure to be initialized.
@@ -62,6 +79,11 @@ static inline void hlist_node_init(struct hlist_node *node)
  */
 static inline void hlist_head_add(struct hlist_head *head, struct hlist_node *new)
 {
+#ifdef DEBUG_HLIST
+    if (unlikely(!hlist_debug_head_add_check(head, new)))
+        return;
+#endif
+
     new->next = head->node;
     new->pprev = &head->node;
     head->node = new;
@@ -77,6 +99,11 @@ static inline void hlist_head_add(struct hlist_head *head, struct hlist_node *ne
  */
 static inline void hlist_next_add(struct hlist_node *node, struct hlist_node *new)
 {
+#ifdef DEBUG_HLIST
+    if (unlikely(!hlist_debug_next_add_check(node, new)))
+        return;
+#endif
+
     new->pprev = &node->next;
     new->next = node->next;
     node->next = new;
@@ -92,6 +119,11 @@ static inline void hlist_next_add(struct hlist_node *node, struct hlist_node *ne
  */
 static inline void hlist_prev_add(struct hlist_node *node, struct hlist_node *new)
 {
+#ifdef DEBUG_HLIST
+    if (unlikely(!hlist_debug_prev_add_check(node, new)))
+        return;
+#endif
+
     new->pprev = node->pprev;
     new->next = node;
     node->pprev = &node->next;
@@ -119,6 +151,11 @@ static inline void hlist_deluf(struct hlist_node *node)
  */
 static inline void hlist_del(struct hlist_node *node)
 {
+#ifdef DEBUG_HLIST
+    if (unlikely(!hlist_debug_del_check(node)))
+        return;
+#endif
+
     hlist_deluf(node);
     node->next = NULL;
     node->pprev = NULL;
@@ -179,8 +216,6 @@ static inline bool hlist_check_unhashed(struct hlist_node *node)
  * @ptr: the list head to take the element from.
  * @type: the type of the struct this is embedded in.
  * @member: the name of the list_head within the struct.
- *
- * Note, that list is expected to be not empty.
  */
 #define hlist_first_entry(ptr, type, member) \
     hlist_entry((ptr)->node, type, member)
@@ -202,7 +237,7 @@ static inline bool hlist_check_unhashed(struct hlist_node *node)
     for ((pos) = (head)->node; (pos); (pos) = (pos)->next)
 
 /**
- * hlist_for_each - iterate over a hlist from the current point.
+ * hlist_for_each_from - iterate over a hlist from the current point.
  * @pos: the &struct hlist_node to use as a loop cursor.
  */
 #define hlist_for_each_from(pos) \
@@ -213,7 +248,7 @@ static inline bool hlist_check_unhashed(struct hlist_node *node)
  * @pos: the &struct hlist_node to use as a loop cursor.
  */
 #define hlist_for_each_continue(pos) \
-    for ((pos) = (pos)->next; (pos); (pos) = (pos)->next)
+    for ((void)((pos) && ((pos) = (pos)->next)); (pos); (pos) = (pos)->next)
 
 /**
  * hlist_for_each_safe - iterate over a hlist safe against removal of hlist entry.
@@ -222,8 +257,8 @@ static inline bool hlist_check_unhashed(struct hlist_node *node)
  * @head: the head for your hlist.
  */
 #define hlist_for_each_safe(pos, tmp, head)                             \
-    for ((pos) = (head)->node, (tmp) = (pos)->next;                     \
-         (pos); (pos) = (tmp), ((tmp) && ((tmp) = (tmp)->next)))
+    for ((pos) = (head)->node; (pos) && ({(tmp) = (pos)->next; 1;});    \
+         (pos) = (tmp), ((tmp) && ((tmp) = (tmp)->next)))
 
 /**
  * hlist_for_each_from_safe - iterate over a hlist safe against removal of hlist entry from the current point.
@@ -231,8 +266,8 @@ static inline bool hlist_check_unhashed(struct hlist_node *node)
  * @tmp: another hlist_node to use as temporary storage.
  */
 #define hlist_for_each_from_safe(pos, tmp)                              \
-    for ((tmp) = (pos)->next;                                           \
-         (pos); (pos) = (tmp), ((tmp) && ((tmp) = (tmp)->next)))
+    for (; (pos) && ({(tmp) = (pos)->next; 1;});                        \
+         (pos) = (tmp), ((tmp) && ((tmp) = (tmp)->next)))
 
 /**
  * hlist_for_each_continue_safe - continue hlist iteration safe against removal.
@@ -240,8 +275,9 @@ static inline bool hlist_check_unhashed(struct hlist_node *node)
  * @tmp: another hlist_node to use as temporary storage.
  */
 #define hlist_for_each_continue_safe(pos, tmp)                          \
-    for ((pos) = (pos)->next, (tmp) = (pos)->next;                      \
-         (pos); (pos) = (tmp), ((tmp) && ((tmp) = (tmp)->next)))
+    for ((void)((pos) && ((pos) = (pos)->next));                        \
+         (pos) && ({(tmp) = (pos)->next; 1;});                          \
+         (pos) = (tmp), ((tmp) && ((tmp) = (tmp)->next)))
 
 /**
  * hlist_for_each_entry	- iterate over list of given type
@@ -254,7 +290,7 @@ static inline bool hlist_check_unhashed(struct hlist_node *node)
          (pos); (pos) = hlist_next_entry(pos, member))
 
 /**
- * hlist_for_each_entry_continue - continue iteration over hlist of given type from the current point.
+ * hlist_for_each_entry_from - continue iteration over hlist of given type from the current point.
  * @pos: the type * to use as a loop cursor.
  * @member: the name of the hlist_node within the struct.
  */
@@ -267,20 +303,20 @@ static inline bool hlist_check_unhashed(struct hlist_node *node)
  * @member: the name of the hlist_node within the struct.
  */
 #define hlist_for_each_entry_continue(pos, member)                      \
-    for ((pos) = hlist_next_entry(pos, member);                         \
+    for ((void)((pos) && ((pos) = hlist_next_entry(pos, member)));      \
          (pos); (pos) = hlist_next_entry(pos, member))
 
 /**
- * slist_for_each_entry_safe - iterate over hlist of given type safe against removal of hlist entry
+ * hlist_for_each_entry_safe - iterate over hlist of given type safe against removal of hlist entry
  * @pos: the type * to use as a loop cursor.
  * @tmp: another type * to use as temporary storage
  * @head: the head for your hlist.
  * @member: the name of the hlist_node within the struct.
  */
 #define hlist_for_each_entry_safe(pos, tmp, head, member)               \
-    for ((pos) = hlist_first_entry(head, typeof(*(pos)), member),       \
-         (tmp) = hlist_next_entry(pos, member); (pos); (pos) = (tmp),   \
-         ((tmp) && ((tmp) = hlist_next_entry(tmp, member))))
+    for ((pos) = hlist_first_entry(head, typeof(*(pos)), member);       \
+         (pos) && ({(tmp) = hlist_next_entry(pos, member); 1;});        \
+         (pos) = (tmp), ((tmp) && ((tmp) = hlist_next_entry(tmp, member))))
 
 /**
  * hlist_for_each_entry_from_safe - iterate over hlist from current point safe against removal.
@@ -289,8 +325,8 @@ static inline bool hlist_check_unhashed(struct hlist_node *node)
  * @member:	the name of the hlist_node within the struct.
  */
 #define hlist_for_each_entry_from_safe(pos, tmp, member)                \
-    for ((tmp) = hlist_next_entry(pos, member); (pos); (pos) = (tmp),   \
-         ((tmp) && ((tmp) = hlist_next_entry(pos, member))))
+    for (; (pos) && ({(tmp) = hlist_next_entry(pos, member); 1;});      \
+         (pos) = (tmp), ((tmp) && ((tmp) = hlist_next_entry(pos, member))))
 
 /**
  * hlist_for_each_entry_continue_safe - continue hlist iteration safe against removal.
@@ -299,8 +335,8 @@ static inline bool hlist_check_unhashed(struct hlist_node *node)
  * @member:	the name of the hlist_node within the struct.
  */
 #define hlist_for_each_entry_continue_safe(pos, tmp, member)            \
-    for ((pos) = hlist_next_entry(pos, member),                         \
-         (tmp) = hlist_next_entry(pos, member); (pos); (pos) = (tmp),   \
-         ((tmp) && ((tmp) = hlist_next_entry(pos, member))))
+    for ((void)((pos) && ((pos) = hlist_next_entry(pos, member)));      \
+         (pos) && ({(tmp) = hlist_next_entry(pos, member); 1;});        \
+         (pos) = (tmp), ((tmp) && ((tmp) = hlist_next_entry(pos, member))))
 
 #endif  /* _HLIST_H_ */
