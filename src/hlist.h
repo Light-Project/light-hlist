@@ -157,8 +157,8 @@ static inline void hlist_del(struct hlist_node *node)
 #endif
 
     hlist_deluf(node);
-    node->next = NULL;
-    node->pprev = NULL;
+    node->next = POISON_HLIST1;
+    node->pprev = POISON_HLIST2;
 }
 
 /**
@@ -188,7 +188,7 @@ static inline void hlist_move_list(struct hlist_head *old, struct hlist_head *ne
  * hlist_check_empty - Is the specified hlist_head structure an empty hlist.
  * @head: Structure to check.
  */
-static inline bool hlist_check_empty(struct hlist_head *head)
+static inline bool hlist_check_empty(const struct hlist_head *head)
 {
     return !head->node;
 }
@@ -197,9 +197,19 @@ static inline bool hlist_check_empty(struct hlist_head *head)
  * hlist_check_unhashed - Has node been removed from list and reinitialized.
  * @node: Node to be checked.
  */
-static inline bool hlist_check_unhashed(struct hlist_node *node)
+static inline bool hlist_check_unhashed(const struct hlist_node *node)
 {
     return !node->pprev;
+}
+
+/**
+ * hlist_check_another - check whether has another node.
+ * @head: slist head to check.
+ * @node: the unique node.
+ */
+static inline bool hlist_check_another(const struct hlist_head *head, const struct hlist_node *node)
+{
+    return head->node == node && node->next == NULL;
 }
 
 /**
